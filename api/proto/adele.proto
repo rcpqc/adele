@@ -1,0 +1,71 @@
+syntax = "proto3";
+
+package adele;
+
+option go_package = "github.com/rcpqc/adele/internal/proto";
+
+// ============== 注册 ==============
+
+message RegisterRequest {
+    string client_id = 1;           // 客户端唯一标识
+    string local_addr = 2;          // 本地HTTP服务地址，如 localhost:3000
+}
+
+message RegisterResponse {
+    string session_id = 1;          // 服务端分配的会话ID
+    string proxy_addr = 2;          // 分配的代理访问地址，如 server:8081
+}
+
+// ============== HTTP 隧道 ==============
+
+message HTTPRequest {
+    string request_id = 1;          // 请求唯一ID
+    string method = 2;              // GET, POST, etc.
+    string path = 3;                // 请求路径
+    map<string, string> headers = 4;// 请求头
+    bytes body = 5;                 // 请求体
+    string query = 6;               // 查询参数
+}
+
+message HTTPResponse {
+    string request_id = 1;          // 对应的请求ID
+    int32 status_code = 2;          // HTTP状态码
+    map<string, string> headers = 3;// 响应头
+    bytes body = 4;                 // 响应体
+}
+
+// ============== 心跳 ==============
+
+message HeartbeatRequest {
+    string session_id = 1;
+    int64 timestamp = 2;
+}
+
+message HeartbeatResponse {
+    int64 server_time = 1;
+}
+
+// ============== 双向流消息封装 ==============
+
+message ClientMessage {
+    oneof payload {
+        RegisterRequest register = 1;
+        HeartbeatRequest heartbeat = 2;
+        HTTPResponse http_response = 3;
+    }
+}
+
+message ServerMessage {
+    oneof payload {
+        RegisterResponse register = 1;
+        HeartbeatResponse heartbeat = 2;
+        HTTPRequest http_request = 3;
+    }
+}
+
+// ============== 服务定义 ==============
+
+service AdeleService {
+    // 双向流 - 主通信通道
+    rpc Connect(stream ClientMessage) returns (stream ServerMessage);
+}
