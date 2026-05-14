@@ -14,14 +14,20 @@ func main() {
 	grpcAddr := flag.String("grpc", ":50051", "gRPC listen address")
 	httpStart := flag.Int("http-start", 8081, "HTTP proxy port start")
 	httpEnd := flag.Int("http-end", 8090, "HTTP proxy port end")
+	tlsCert := flag.String("tls-cert", "", "TLS certificate file (empty = plain HTTP)")
+	tlsKey := flag.String("tls-key", "", "TLS private key file")
 	flag.Parse()
 
 	// 创建服务端
-	s := server.New(
+	opts := []server.Option{
 		server.WithGRPCAddress(*grpcAddr),
 		server.WithHTTPPortRange(*httpStart, *httpEnd),
 		server.WithHeartbeatTimeout(60000),
-	)
+	}
+	if *tlsCert != "" {
+		opts = append(opts, server.WithTLSCert(*tlsCert, *tlsKey))
+	}
+	s := server.New(opts...)
 
 	// 启动服务端
 	go func() {

@@ -55,6 +55,8 @@ type Options struct {
 	HTTPPortStart    int    // HTTP代理端口起始
 	HTTPPortEnd      int    // HTTP代理端口结束
 	HeartbeatTimeout int64  // 心跳超时(毫秒)
+	TLSCertFile      string // TLS 证书文件 (空=纯HTTP)
+	TLSKeyFile       string // TLS 私钥文件
 }
 
 // Option 配置函数
@@ -86,6 +88,14 @@ func WithHTTPPortRange(start, end int) Option {
 // WithHeartbeatTimeout 设置心跳超时
 func WithHeartbeatTimeout(timeout int64) Option {
 	return func(o *Options) { o.HeartbeatTimeout = timeout }
+}
+
+// WithTLSCert 设置 TLS 证书, 启用 HTTPS.
+func WithTLSCert(certFile, keyFile string) Option {
+	return func(o *Options) {
+		o.TLSCertFile = certFile
+		o.TLSKeyFile = keyFile
+	}
 }
 
 // New 创建服务端实例
@@ -275,7 +285,7 @@ func (s *Server) handleHTTPResponse(resp *proto.HTTPResponse, cc *clientConn) {
 	}
 }
 
-// startHTTPProxy 启动HTTP代理服务
+// startHTTPProxy 启动HTTP/HTTPS代理服务
 func (s *Server) startHTTPProxy(port int, cc *clientConn) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.proxyHTTP(w, r, cc)
@@ -285,10 +295,19 @@ func (s *Server) startHTTPProxy(port int, cc *clientConn) {
 	cc.httpServer = &http.Server{Addr: addr, Handler: handler}
 	cc.info.ProxyAddr = addr
 
-	log.Printf("[Adele] HTTP proxy starting on %s for client %s", addr, cc.info.ClientID)
+	scheme := "HTTP"
+	var err error
+	if s.opts.TLSCertFile != "" {
+		scheme = "HTTPS"
+		err = cc.httpServer.ListenAndServeTLS(s.opts.TLSCertFile, s.opts.TLSKeyFile)
+	} else {
+		err = cc.httpServer.ListenAndServe()
+	}
 
-	if err := cc.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Printf("[Adele] HTTP proxy error on %s: %v", addr, err)
+	log.Printf("[Adele] %s proxy starting on %s for client %s", scheme, addr, cc.info.ClientID)
+
+	if err != nil && err != http.ErrServerClosed {
+		log.Printf("[Adele] %s proxy error on %s: %v", scheme, addr, err)
 	}
 }
 
