@@ -31,11 +31,12 @@ type Server struct {
 
 // clientConn 客户端连接
 type clientConn struct {
-	info      *ClientInfo
-	stream    proto.AdeleService_ConnectServer
-	pending   map[string]chan *proto.HTTPResponse // requestID -> response channel
-	pendingMu sync.RWMutex
-	cancel    context.CancelFunc
+	info       *ClientInfo
+	stream     proto.AdeleService_ConnectServer
+	pending    map[string]chan *proto.HTTPResponse // requestID -> response channel
+	pendingMu  sync.RWMutex
+	httpServer *http.Server // 该客户端的HTTP代理服务
+	cancel     context.CancelFunc
 }
 
 // ClientInfo 客户端信息
@@ -281,13 +282,13 @@ func (s *Server) startHTTPProxy(port int, cc *clientConn) {
 	})
 
 	addr := fmt.Sprintf(":%d", port)
-	server := &http.Server{Addr: addr, Handler: handler}
+	cc.httpServer = &http.Server{Addr: addr, Handler: handler}
+	cc.info.ProxyAddr = addr
 
 	log.Printf("[Adele] HTTP proxy starting on %s for client %s", addr, cc.info.ClientID)
 
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+	if err := cc.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Printf("[Adele] HTTP proxy error on %s: %v", addr, err)
-		s.portPool.Release(port)
 	}
 }
 
@@ -371,9 +372,28 @@ func (s *Server) unregister(sessionID string) {
 	delete(s.clients, sessionID)
 	s.mu.Unlock()
 
-	// 释放端口
+	// 关闭HTTP代理服务，等待正在处理的请求完成
+	if cc.httpServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cc.httpServer.Shutdown(ctx)
+		cancel()
+	}
+
+	// 解析端口
 	_, portStr, _ := net.SplitHostPort(cc.info.ProxyAddr)
 	port, _ := strconv.Atoi(portStr)
+
+	// 等待端口真正释放（最多3秒），避免 TIME_WAIT 导致复用失败
+	for i := 0; i < 30; i++ {
+		ln, err := net.Listen("tcp", cc.info.ProxyAddr)
+		if err == nil {
+			ln.Close()
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	// 放回端口池
 	s.portPool.Release(port)
 
 	log.Printf("[Adele] Client unregistered: %s (proxy: %s)", cc.info.ClientID, cc.info.ProxyAddr)
